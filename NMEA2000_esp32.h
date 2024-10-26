@@ -20,6 +20,8 @@ public:
 
     void SetCANBufferSize(uint16_t RxBufferSize, uint16_t TxBufferSize);
 
+    //bool CANSendStandardFrame(unsigned long id, unsigned char len, const unsigned char *buf, bool wait_sent=false);
+    
 protected:
     bool CANSendFrame(unsigned long id, unsigned char len, const unsigned char *buf, bool wait_sent) override;
 
