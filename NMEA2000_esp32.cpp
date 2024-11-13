@@ -113,12 +113,14 @@ bool tNMEA2000_esp32::CANSendStandardFrame(unsigned long id, unsigned char len, 
     
 bool tNMEA2000_esp32::CANSendFrame(unsigned long id, unsigned char len, const unsigned char *buf, bool wait_sent) {
     twai_message_t message = {
-        .extd = 1,
-        .rtr = 0,
-        .ss = 0,
-        .self = 0,
-        .dlc_non_comp = 0,
-        .reserved = 0,
+//        .extd = 1,
+//        .rtr = 0,
+//        .ss = 0,
+//        .self = 0,
+//        .dlc_non_comp = 0,
+//        .reserved = 0,
+// some compilers cant cope with union->struct above, setting the 32 bit flags directly below.
+        .flags = 0x01,
         .identifier = id,
         .data_length_code = static_cast<uint8_t>(len > 8 ? 8 : len),
         .data = {0}
