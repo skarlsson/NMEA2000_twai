@@ -87,30 +87,7 @@ void tNMEA2000_esp32::CAN_deinit() {
         is_open_ = false;
     }
 }
-
-/*
-bool tNMEA2000_esp32::CANSendStandardFrame(unsigned long id, unsigned char len, const unsigned char *buf, bool wait_sent){
-    twai_message_t message = {
-        .extd = 0,
-        .rtr = 0,
-        .ss = 0,
-        .self = 0,
-        .dlc_non_comp = 0,
-        .reserved = 0,
-        .identifier = id,
-        .data_length_code = static_cast<uint8_t>(len > 8 ? 8 : len),
-        .data = {0}
-    };
-    memcpy(message.data, buf, message.data_length_code);
-    esp_err_t result = twai_transmit(&message, wait_sent ? pdMS_TO_TICKS(100) : 0);
-    if (result != ESP_OK) {
-        //ESP_LOGE(TAG, "Failed to transmit message: %s", esp_err_to_name(result));
-    } else {
-
-    }
-    return (result == ESP_OK);
-}*/
-    
+   
 bool tNMEA2000_esp32::CANSendFrame(unsigned long id, unsigned char len, const unsigned char *buf, bool wait_sent) {
     twai_message_t message = {
 //        .extd = 1,
