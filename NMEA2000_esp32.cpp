@@ -127,39 +127,46 @@ static constexpr unsigned long DefReceiveMessages[] = {
 };
 
 void tNMEA2000_esp32::BuildAcceptanceFilter() {
+    // For NMEA2000, we only want to filter on the PGN portion
+    // Use same mask as proven Linux CAN socket implementation
+    uint32_t pgn_mask = 0x3FFFF00;  // Only look at PGN bits
+
+    // Find common bits among all PGNs we want to accept
     bool first_pgn = true;
     uint32_t common_bits = 0;
-    uint32_t varying_bits = 0;
 
+    // Process default messages
     for (int i = 0; DefReceiveMessages[i] != 0; i++) {
         uint32_t id = DefReceiveMessages[i] << 8;
         if (first_pgn) {
             common_bits = id;
-            varying_bits = id;
             first_pgn = false;
         } else {
             common_bits &= id;
-            varying_bits |= id;
         }
     }
 
-    // Then add messages from all defined devices
+    // Process device-specific messages
     for (int dev = 0; dev < DeviceCount; dev++) {
         if (Devices[dev].ReceiveMessages) {
             for (int i = 0; Devices[dev].ReceiveMessages[i] != 0; i++) {
                 uint32_t id = Devices[dev].ReceiveMessages[i] << 8;
                 common_bits &= id;
-                varying_bits |= id;
             }
         }
     }
 
     f_config_ = {
-        .acceptance_code = common_bits,
-        .acceptance_mask = ~(varying_bits ^ common_bits),
+        .acceptance_code = common_bits & pgn_mask,  // Only use PGN bits
+        .acceptance_mask = pgn_mask,               // Only check PGN bits
         .single_filter = true
     };
-    ESP_LOGI(TAG, "TWAI Filter: code=0x%lx, mask=0x%lx", f_config_.acceptance_code, f_config_.acceptance_mask);
+
+    ESP_LOGI(TAG, "Filter calculation:");
+    ESP_LOGI(TAG, "PGN mask = 0x%08lx", pgn_mask);
+    ESP_LOGI(TAG, "Common PGN bits = 0x%08lx", common_bits & pgn_mask);
+    ESP_LOGI(TAG, "Final filter: code=0x%lx, mask=0x%lx",
+             f_config_.acceptance_code, f_config_.acceptance_mask);
 }
 
 bool tNMEA2000_esp32::CANSendFrame(unsigned long id, unsigned char len, const unsigned char *buf, bool wait_sent) {
