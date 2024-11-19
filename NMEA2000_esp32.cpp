@@ -48,7 +48,7 @@ tNMEA2000_esp32::tNMEA2000_esp32(
 #ifdef CONFIG_TWAI_ISR_IN_IRAM
     g_config_.intr_flags = ESP_INTR_FLAG_IRAM;
 #else
-     pragma warning "CONFIG_TWAI_ISR_IN_IRAM not set"
+    #warning "CONFIG_TWAI_ISR_IN_IRAM not set in menuconfig"
 #endif
 }
 
