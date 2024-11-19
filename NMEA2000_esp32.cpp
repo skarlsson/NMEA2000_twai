@@ -3,11 +3,23 @@
 
 #define TAG "NMEA2000_esp32"
 
-tNMEA2000_esp32::tNMEA2000_esp32(gpio_num_t TxPin, gpio_num_t RxPin, CAN_speed_t can_speed) : tNMEA2000(),
-    is_open_(false),
-    error_monitor_task_handle_(NULL),
-    should_stop_error_monitor_(false) {
+tNMEA2000_esp32::tNMEA2000_esp32(
+    gpio_num_t TxPin,
+    gpio_num_t RxPin,
+    int twai_controller_id,
+    CAN_speed_t can_speed,
+    bool use_filter) : tNMEA2000(),
+                       is_open_(false),
+                       use_filter_(use_filter),
+                       error_monitor_task_handle_(nullptr),
+                       should_stop_error_monitor_(false) {
     switch (can_speed) {
+        case CAN_speed_t::CAN_SPEED_25KBPS:
+            t_config_ = TWAI_TIMING_CONFIG_25KBITS();
+            break;
+        case CAN_speed_t::CAN_SPEED_50KBPS:
+            t_config_ = TWAI_TIMING_CONFIG_50KBITS();
+            break;
         case CAN_speed_t::CAN_SPEED_100KBPS:
             t_config_ = TWAI_TIMING_CONFIG_100KBITS();
             break;
@@ -28,8 +40,16 @@ tNMEA2000_esp32::tNMEA2000_esp32(gpio_num_t TxPin, gpio_num_t RxPin, CAN_speed_t
     }
     f_config_ = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     g_config_ = TWAI_GENERAL_CONFIG_DEFAULT(TxPin, RxPin, TWAI_MODE_NORMAL);
-    // I believe this should be set using menuconfig - otherwise bad things happen when trying ota over can
-    // g_config.intr_flags = ESP_INTR_FLAG_IRAM;
+    g_config_.controller_id = twai_controller_id;
+    g_config_.tx_queue_len = 10;
+    g_config_.rx_queue_len = 10;
+
+    // should be set using menuconfig - otherwise bad things happen when trying ota over can
+#ifdef CONFIG_TWAI_ISR_IN_IRAM
+    g_config_.intr_flags = ESP_INTR_FLAG_IRAM;
+#else
+     pragma warning "CONFIG_TWAI_ISR_IN_IRAM not set"
+#endif
 }
 
 tNMEA2000_esp32::~tNMEA2000_esp32() {
@@ -55,6 +75,9 @@ void tNMEA2000_esp32::InitCANFrameBuffers() {
 
 bool tNMEA2000_esp32::CANOpen() {
     if (is_open_) return true;
+
+    if (use_filter_)
+        BuildAcceptanceFilter();  // Build filter before opening
     CAN_init();
     is_open_ = true;
     // Start error monitoring task
@@ -65,10 +88,10 @@ bool tNMEA2000_esp32::CANOpen() {
 void tNMEA2000_esp32::CAN_init() {
     ESP_LOGI(TAG, "Initializing TWAI driver");
     // Install TWAI driver
-    esp_err_t result = twai_driver_install(&g_config_, &t_config_, &f_config_);
+    esp_err_t result = twai_driver_install_v2(&g_config_, &t_config_, &f_config_, &twai_handle_);
     if (result == ESP_OK) {
         // Start TWAI driver
-        result = twai_start();
+        result = twai_start_v2(twai_handle_);
         if (result == ESP_OK) {
             ESP_LOGI(TAG, "TWAI driver started successfully");
         } else {
@@ -82,28 +105,90 @@ void tNMEA2000_esp32::CAN_init() {
 void tNMEA2000_esp32::CAN_deinit() {
     if (is_open_) {
         ESP_LOGI(TAG, "Stopping TWAI driver");
-        twai_stop();
-        twai_driver_uninstall();
+        twai_stop_v2(twai_handle_);
+        twai_driver_uninstall_v2(twai_handle_);
         is_open_ = false;
     }
 }
-   
+
+// we really hope this is defined in NMEA200.cpp
+// extern const unsigned long DefReceiveMessages[];
+// or define it here...
+
+static constexpr unsigned long DefReceiveMessages[] = {
+    59392L, /* ISO Acknowledgement, pri=6, period=NA */
+    59904L, /* ISO Request, pri=6, period=NA */
+    60416L, /* Multi packet data transfer, TP.DT */
+    60160L, /* Multi packet connection management, TP.CM */
+    60928L, /* ISO Address Claim */
+    65240L, /* Commanded Address */
+    126208L, /* NMEA Request/Command/Acknowledge group function */
+    0
+};
+
+void tNMEA2000_esp32::BuildAcceptanceFilter() {
+    // For NMEA2000, we only want to filter on the PGN portion
+    // Use same mask as proven Linux CAN socket implementation
+    uint32_t pgn_mask = 0x3FFFF00;  // Only look at PGN bits
+
+    // Find common bits among all PGNs we want to accept
+    bool first_pgn = true;
+    uint32_t common_bits = 0;
+
+    // Process default messages
+    for (int i = 0; DefReceiveMessages[i] != 0; i++) {
+        uint32_t id = DefReceiveMessages[i] << 8;
+        if (first_pgn) {
+            common_bits = id;
+            first_pgn = false;
+        } else {
+            common_bits &= id;
+        }
+    }
+
+    // Process device-specific messages
+    for (int dev = 0; dev < DeviceCount; dev++) {
+        if (Devices[dev].ReceiveMessages) {
+            for (int i = 0; Devices[dev].ReceiveMessages[i] != 0; i++) {
+                uint32_t id = Devices[dev].ReceiveMessages[i] << 8;
+                common_bits &= id;
+            }
+        }
+    }
+
+    f_config_ = {
+        .acceptance_code = common_bits & pgn_mask,  // Only use PGN bits
+        .acceptance_mask = pgn_mask,               // Only check PGN bits
+        .single_filter = true
+    };
+
+    ESP_LOGI(TAG, "Filter calculation:");
+    ESP_LOGI(TAG, "PGN mask = 0x%08lx", pgn_mask);
+    ESP_LOGI(TAG, "Common PGN bits = 0x%08lx", common_bits & pgn_mask);
+    ESP_LOGI(TAG, "Final filter: code=0x%lx, mask=0x%lx",
+             f_config_.acceptance_code, f_config_.acceptance_mask);
+}
+
 bool tNMEA2000_esp32::CANSendFrame(unsigned long id, unsigned char len, const unsigned char *buf, bool wait_sent) {
+    if (!is_open_)
+        return false;
+
     twai_message_t message = {
-//        .extd = 1,
-//        .rtr = 0,
-//        .ss = 0,
-//        .self = 0,
-//        .dlc_non_comp = 0,
-//        .reserved = 0,
-// some compilers cant cope with union->struct above, setting the 32 bit flags directly below.
+        //        .extd = 1,
+        //        .rtr = 0,
+        //        .ss = 0,
+        //        .self = 0,
+        //        .dlc_non_comp = 0,
+        //        .reserved = 0,
+        // some compilers cant cope with union->struct above, setting the 32 bit flags directly below.
         .flags = 0x01,
         .identifier = id,
         .data_length_code = static_cast<uint8_t>(len > 8 ? 8 : len),
         .data = {0}
     };
     memcpy(message.data, buf, message.data_length_code);
-    esp_err_t result = twai_transmit(&message, wait_sent ? pdMS_TO_TICKS(100) : 0);
+    //todo this could use some love when doing microsleep
+    esp_err_t result = twai_transmit_v2(twai_handle_, &message, wait_sent ? pdMS_TO_TICKS(100) : 0);
     if (result != ESP_OK) {
         //ESP_LOGE(TAG, "Failed to transmit message: %s", esp_err_to_name(result));
     }
@@ -111,8 +196,12 @@ bool tNMEA2000_esp32::CANSendFrame(unsigned long id, unsigned char len, const un
 }
 
 bool tNMEA2000_esp32::CANGetFrame(unsigned long &id, unsigned char &len, unsigned char *buf) {
+    if (!is_open_)
+        return false;
+
     twai_message_t message;
-    if (twai_receive(&message, pdMS_TO_TICKS(10)) == ESP_OK) {
+    // Use 0 timeout for non-blocking receive
+    if (twai_receive_v2(twai_handle_, &message, 0) == ESP_OK) {
         id = message.identifier;
         len = message.data_length_code;
         memcpy(buf, message.data, len);
@@ -126,7 +215,7 @@ void tNMEA2000_esp32::errorMonitorTask(void *pvParameters) {
     twai_status_info_t status_info;
 
     while (!instance->should_stop_error_monitor_) {
-        if (twai_get_status_info(&status_info) == ESP_OK) {
+        if (twai_get_status_info_v2(instance->twai_handle_, &status_info) == ESP_OK) {
             if (status_info.state == TWAI_STATE_BUS_OFF) {
                 ESP_LOGE(TAG, "Bus-off condition detected");
                 instance->handleBusError();
@@ -138,7 +227,7 @@ void tNMEA2000_esp32::errorMonitorTask(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(1000)); // Check every second
     }
 
-    vTaskDelete(NULL);
+    vTaskDelete(nullptr);
 }
 
 void tNMEA2000_esp32::handleBusError() {
