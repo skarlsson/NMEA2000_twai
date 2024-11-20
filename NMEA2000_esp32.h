@@ -16,7 +16,8 @@ public:
         CAN_SPEED_1000KBPS = 1000
     };
 
-    tNMEA2000_esp32(gpio_num_t _TxPin, gpio_num_t _RxPin, int twai_controller_id=0, CAN_speed_t = CAN_speed_t::CAN_SPEED_250KBPS, bool use_filter=false);
+    tNMEA2000_esp32(gpio_num_t _TxPin, gpio_num_t _RxPin, int twai_controller_id = 0,
+                    CAN_speed_t = CAN_speed_t::CAN_SPEED_250KBPS);
 
     ~tNMEA2000_esp32();
 
@@ -36,8 +37,6 @@ private:
 
     void CAN_deinit();
 
-    void BuildAcceptanceFilter();
-
     static void errorMonitorTask(void *pvParameters);
 
     void handleBusError();
@@ -45,9 +44,8 @@ private:
     twai_timing_config_t t_config_;
     twai_filter_config_t f_config_;
     twai_general_config_t g_config_;
-    twai_handle_t twai_handle_=nullptr;
+    twai_handle_t twai_handle_ = nullptr;
     bool is_open_;
-    bool use_filter_ = false;
     TaskHandle_t error_monitor_task_handle_;
     volatile bool should_stop_error_monitor_;
 };
