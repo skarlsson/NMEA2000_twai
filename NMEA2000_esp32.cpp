@@ -81,7 +81,7 @@ bool tNMEA2000_esp32::CANOpen()
 {
     if (is_open_) return true;
     CAN_init();
-    is_open_ = true;
+    //is_open_ = true;
     xTaskCreate(errorMonitorTask, "TWAI_errMonitor", 4096, this, 5, &error_monitor_task_handle_);
     return true;
 }
@@ -96,6 +96,7 @@ void tNMEA2000_esp32::CAN_init()
         if (result == ESP_OK)
         {
             ESP_LOGI(TAG, "TWAI driver started successfully");
+            is_open_ = true;
         }
         else
         {
@@ -121,8 +122,10 @@ void tNMEA2000_esp32::CAN_deinit()
 
 bool tNMEA2000_esp32::CANSendFrame(unsigned long id, unsigned char len, const unsigned char* buf, bool wait_sent)
 {
-    if (!is_open_)
+    if (!is_open_) {
+        ESP_LOGI(TAG, "CANSendFrame - not open...");
         return false;
+    }
 
     twai_message_t message = {
         //        .extd = 1,
@@ -149,8 +152,10 @@ bool tNMEA2000_esp32::CANSendFrame(unsigned long id, unsigned char len, const un
 
 bool tNMEA2000_esp32::CANGetFrame(unsigned long& id, unsigned char& len, unsigned char* buf)
 {
-    if (!is_open_)
+    if (!is_open_) {
+        ESP_LOGI(TAG, "CANGetFrame - not open...");
         return false;
+    }
     twai_message_t message;
     if (twai_receive_v2(twai_handle_, &message, 0) == ESP_OK)
     {
