@@ -47,6 +47,8 @@ private:
 
     void handleBusError();
 
+    void resumeFromStopped();
+
     twai_timing_config_t t_config_;
     twai_filter_config_t f_config_;
     twai_general_config_t g_config_;

@@ -235,8 +235,15 @@ void tNMEA2000_esp32::errorMonitorTask(void* pvParameters)
         {
             if (status_info.state == TWAI_STATE_BUS_OFF)
             {
-                // handleBusError reports the bus-off once and reinitializes.
+                // handleBusError reports the bus-off once and initiates recovery.
                 instance->handleBusError();
+            }
+            else if (status_info.state == TWAI_STATE_STOPPED)
+            {
+                // Recovery has completed (driver returns to STOPPED); restart it
+                // to resume normal operation. On a dead bus recovery never
+                // completes, so the driver simply idles in RECOVERING instead.
+                instance->resumeFromStopped();
             }
             else if (status_info.tx_error_counter > 127 || status_info.rx_error_counter > 127)
             {
@@ -257,13 +264,31 @@ void tNMEA2000_esp32::errorMonitorTask(void* pvParameters)
 
 void tNMEA2000_esp32::handleBusError()
 {
-    // Report once per outage; the flag (cleared on recovery in CANGetFrame)
-    // also silences the per-cycle reinit logs in CAN_deinit/CAN_init.
+    // Report once per outage; the flag is re-armed on genuine recovery in
+    // CANGetFrame (a received frame).
     if (!busoff_reported_) {
-        ESP_LOGE(TAG, "Bus-off; reinitializing TWAI every 2s, suppressing further messages until recovery");
+        ESP_LOGE(TAG, "Bus-off; initiating TWAI recovery, suppressing further messages until recovery");
         busoff_reported_ = true;
     }
-    CAN_deinit();
-    vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for 1 second before reinitializing
-    CAN_init();
+    // Recover in place. twai_initiate_recovery_v2 transitions BUS_OFF ->
+    // RECOVERING without uninstalling the driver; the monitor restarts it once
+    // it returns to STOPPED. A full uninstall/reinstall here trips an ESP-IDF
+    // assertion in vSemaphoreDeleteWithCaps (twai_driver_uninstall_v2) and
+    // panics, so the driver must stay installed.
+    xSemaphoreTake(can_mutex_, portMAX_DELAY);
+    if (is_open_)
+    {
+        twai_initiate_recovery_v2(twai_handle_);
+    }
+    xSemaphoreGive(can_mutex_);
+}
+
+void tNMEA2000_esp32::resumeFromStopped()
+{
+    xSemaphoreTake(can_mutex_, portMAX_DELAY);
+    if (is_open_)
+    {
+        twai_start_v2(twai_handle_);
+    }
+    xSemaphoreGive(can_mutex_);
 }
